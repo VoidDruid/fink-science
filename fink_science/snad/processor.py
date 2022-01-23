@@ -1,13 +1,11 @@
 from pyspark.sql.functions import pandas_udf, PandasUDFType
-from pyspark.sql.types import DoubleType, DoubleType, ArrayType, StructType, StructField, Row
+from pyspark.sql.types import DoubleType, DoubleType, ArrayType
 
 import pandas as pd
 import numpy as np
 import light_curve as lc
 
 from fink_science import __file__
-
-from fink_science.ztf.utilities import fix_nans
 
 
 def create_extractor():
@@ -24,12 +22,10 @@ def create_extractor():
         lc.Kurtosis(),
         lc.MaximumSlope(),
         lc.Skew(),
-        lc.WeightedMean(),
         lc.Eta(),
         lc.AndersonDarlingNormal(),
         lc.ReducedChi2(),
         lc.InterPercentileRange(quantile=0.1),
-        #lc.MagnitudePercentageRatio(),
         lc.MedianBufferRangePercentage(quantile=0.1),
         lc.PercentDifferenceMagnitudePercentile(quantile=0.1),
         lc.MedianAbsoluteDeviation(),
@@ -38,53 +34,59 @@ def create_extractor():
         lc.LinearTrend(),
         lc.StetsonK(),
         lc.WeightedMean(),
+        # 0.4, 0.05 and 0.2, 0.1 are 'default' values
+        lc.MagnitudePercentageRatio(
+            quantile_numerator=0.4,
+            quantile_denominator=0.05,
+        ),
+        lc.MagnitudePercentageRatio(
+            quantile_numerator=0.2,
+            quantile_denominator=0.1,
+        ),
+        #lc.OtsuSplit(), - experimental, not using it yet
         #lc.Bins(),
-        #lc.OtsuSplit(),
     )
 
 
 # 'lc.Extrator' can not be pickled, and thus needs to be created inside the udf,
 # but we also need the list of names outside the udf
-names = create_extractor().names
-sturct_def = " double,".join(names) + " double"
+column_names = list(map(lambda n: 'lc_' + n, create_extractor().names))
 
-@pandas_udf(sturct_def, PandasUDFType.SCALAR)
-def extract_features_ztf(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.DataFrame:
-    result_len = len(arr_magpsf)
-    index = np.arange(0, result_len)
-    results_df = pd.DataFrame(columns=names, index=index)
-    empty_result = [None] * len(names)
 
+@pandas_udf(ArrayType(DoubleType()), PandasUDFType.SCALAR)
+def extract_features_snad(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.DataFrame:
+    results = []
     extractor = create_extractor()
-
-    for i, magpsf, jd, sigmapsf in zip(index, arr_magpsf, arr_jd, arr_sigmapsf):
+    for magpsf, jd, sigmapsf in zip(arr_magpsf, arr_jd, arr_sigmapsf):
         magpsf = magpsf.astype("float64")
         jd = jd.astype("float64")
         sigmapsf = jd.astype("float64")
-        fix_nans(magpsf)
-        fix_nans(sigmapsf)
+
+        nans = np.isnan(magpsf) | np.isnan(sigmapsf)
+        magpsf = magpsf[~nans]
+        sigmapsf = sigmapsf[~nans]
+        jd = jd[~nans]
 
         try:
             result = extractor(jd, magpsf, sigmapsf)
         except ValueError as e:
-            # skip if
+            # skip if known error
             if e.args[0] in (
                 "feature value is undefined for a flat time series", # one of the series is 'flat' (std==0)
                 "t must be in ascending order",  # incorrect ordering
             ) or (
                 "is smaller than the minimum required length" in e.args[0],  # dataset is too small
             ):
-                result = empty_result
-            # otherwise reraise
-            else:
-                raise
+                results.append(None)
+                continue
+            # otherwise log, then skip
+            raise
 
-        results_df.loc[i] = result
+        results.append(result)
 
-    return results_df
+    return pd.Series(results)
 
 
 if __name__ == "__main__":
     """ Execute the test suite """
-
     # TODO: test suite
