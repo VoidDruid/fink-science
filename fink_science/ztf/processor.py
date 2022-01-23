@@ -46,13 +46,18 @@ def create_extractor():
 # 'lc.Extrator' can not be pickled, and thus needs to be created inside the udf,
 # but we also need the list of names outside the udf
 names = create_extractor().names
+sturct_def = " double,".join(names) + " double"
 
+@pandas_udf(sturct_def, PandasUDFType.SCALAR)
+def extract_features_ztf(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.DataFrame:
+    result_len = len(arr_magpsf)
+    index = np.arange(0, result_len)
+    results_df = pd.DataFrame(columns=names, index=index)
+    empty_result = [None] * len(names)
 
-@pandas_udf(ArrayType(DoubleType()), PandasUDFType.SCALAR)
-def extract_features_ztf(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.Series:
-    results = []
     extractor = create_extractor()
-    for magpsf, jd, sigmapsf in zip(arr_magpsf, arr_jd, arr_sigmapsf):
+
+    for i, magpsf, jd, sigmapsf in zip(index, arr_magpsf, arr_jd, arr_sigmapsf):
         magpsf = magpsf.astype("float64")
         jd = jd.astype("float64")
         sigmapsf = jd.astype("float64")
@@ -69,14 +74,14 @@ def extract_features_ztf(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.Series:
             ) or (
                 "is smaller than the minimum required length" in e.args[0],  # dataset is too small
             ):
-                results.append(None)
-                continue
+                result = empty_result
             # otherwise reraise
-            raise
+            else:
+                raise
 
-        results.append(result)
+        results_df.loc[i] = result
 
-    return pd.Series(results)
+    return results_df
 
 
 if __name__ == "__main__":
