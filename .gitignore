@@ -6,3 +6,4 @@ htmlcov
 .DS_Store
 fink_science.egg-info/
 *.crc
+.coverage.*

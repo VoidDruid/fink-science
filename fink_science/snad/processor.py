@@ -1,3 +1,6 @@
+import logging
+import os
+
 from pyspark.sql.functions import pandas_udf, PandasUDFType
 from pyspark.sql.types import DoubleType, DoubleType, ArrayType
 
@@ -6,6 +9,10 @@ import numpy as np
 import light_curve as lc
 
 from fink_science import __file__
+from fink_science.tester import spark_unit_tests
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_extractor():
@@ -55,6 +62,8 @@ column_names = list(map(lambda n: 'lc_' + n, create_extractor().names))
 
 @pandas_udf(ArrayType(DoubleType()), PandasUDFType.SCALAR)
 def extract_features_snad(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.DataFrame:
+    # TODO: doctests
+
     results = []
     extractor = create_extractor()
     for magpsf, jd, sigmapsf in zip(arr_magpsf, arr_jd, arr_sigmapsf):
@@ -70,17 +79,19 @@ def extract_features_snad(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.DataFrame:
         try:
             result = extractor(jd, magpsf, sigmapsf)
         except ValueError as e:
-            # skip if known error
-            if e.args[0] in (
-                "feature value is undefined for a flat time series", # one of the series is 'flat' (std==0)
-                "t must be in ascending order",  # incorrect ordering
-            ) or (
-                "is smaller than the minimum required length" in e.args[0],  # dataset is too small
+            # log if unknown error, then skip
+            if not (
+                e.args[0] in (
+                    "feature value is undefined for a flat time series", # one of the series is 'flat' (std==0)
+                    "t must be in ascending order",  # incorrect ordering
+                ) or (
+                    "is smaller than the minimum required length" in e.args[0],  # dataset is too small
+                )
             ):
-                results.append(None)
-                continue
-            # otherwise log, then skip
-            raise
+                # otherwise log, then skip
+                logger.exception(f"Unknown exception in processor '{__file__}/{extract_features_snad.__name__}'")
+            results.append(None)
+            continue
 
         results.append(result)
 
@@ -89,4 +100,11 @@ def extract_features_snad(arr_magpsf, arr_jd, arr_sigmapsf, _) -> pd.DataFrame:
 
 if __name__ == "__main__":
     """ Execute the test suite """
-    # TODO: test suite
+    globs = globals()
+    path = os.path.dirname(__file__)
+
+    ztf_alert_sample = 'file://{}/data/alerts/datatest'.format(path)
+    globs["ztf_alert_sample"] = ztf_alert_sample
+    
+    # Run the test suite
+    spark_unit_tests(globs)
