@@ -62,5 +62,22 @@ if errors:
         json.dump(errors, last_run, indent=4)
     exit(1)
 else:
-    print("Ok!")
-    exit(0)
+    print("Feature test OK!")
+
+
+unordered_data = pd.read_json(f"{path}/tests/unordered_jd.json")
+row = unordered_data.iloc[0]
+result = processor.extract_features_ad_raw(
+    row['cmagpsf'],
+    row['cjd'],
+    row['csigmapsf'],
+    row['cfid'],
+    row['objectId'],
+)
+if result in ({1: None, 2: None}, {}):
+    print('REGRESSION: could not extract features from data with unordered jd')
+    exit(1)
+else:
+    print("Unordered jd test OK!")
+
+exit(0)

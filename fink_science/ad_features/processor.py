@@ -119,24 +119,46 @@ def extract_features_ad_raw(
     ...    assert len(row['lc_features']) == len(np.unique(row['cfid']))
     ...    assert len(row['lc_features'][1]) == 26
     """
+    if cfid is None or magpsf is None or jd is None or sigmapsf is None:
+        return {}
 
-    cfid = np.asarray(cfid, "int32")
-    magpsf = np.asarray(magpsf, "float64")
-    jd = np.asarray(jd, "float64")
-    sigmapsf = np.asarray(sigmapsf, "float64")
+    # Using pd.isna here because values are not yet converted to numpy arrays
+    try:
+        initial_mask = (~pd.isna(cfid)) & (~pd.isna(magpsf)) & (~pd.isna(jd)) & (~pd.isna(sigmapsf))
+        cfid = np.array(cfid)[initial_mask]
+        magpsf = np.array(magpsf)[initial_mask]
+        jd = np.array(jd)[initial_mask]
+        sigmapsf = np.array(sigmapsf)[initial_mask]
+        
+        cfid = cfid.astype("int32")
+        magpsf = magpsf.astype("float64")
+        jd = jd.astype("float64")
+        sigmapsf = sigmapsf.astype("float64")
 
-    extractor = create_extractor()
-
-    passbands = np.unique(cfid)
+        sort_order = jd.argsort()
+        unique_filter = np.unique(jd, return_index=True)[1]
+        order = sort_order[np.isin(sort_order, unique_filter)]
+        jd = jd[order]
+        cfid = cfid[order]
+        magpsf = magpsf[order]
+        sigmapsf = sigmapsf[order]
+    except Exception as e:
+        logger.exception(
+            "Error during initial processing in processor '{__file__}/{extract_features_ad.__name__}'. "
+            "cfid={cfid}; magpsf={magpsf}; jd={jd}; sigmapsf={sigmapsf}."
+        )
+        return {}
 
     # Select only valid measurements (not upper limits)
-    maskNotNone = magpsf == magpsf
-    mask = ~(np.isnan(magpsf) | np.isnan(sigmapsf)) & maskNotNone
-
+    mask = magpsf == magpsf
     magpsf = magpsf[mask]
     sigmapsf = sigmapsf[mask]
     jd = jd[mask]
     cfid = cfid[mask]
+
+    extractor = create_extractor()
+
+    passbands = np.unique(cfid)
 
     full_result = {}
     for passband_id in passbands:
